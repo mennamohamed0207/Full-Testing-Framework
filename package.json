@@ -13,10 +13,12 @@
   "type": "commonjs",
   "devDependencies": {
     "@playwright/test": "^1.62.1",
-    "@types/node": "^26.4.0"
+    "@types/node": "^26.4.1",
+    "fs": "^0.0.1-security",
+    "path": "^0.12.7"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
-    "path": "^0.12.7"
+    "zod": "^4.5.4"
   }
 }
