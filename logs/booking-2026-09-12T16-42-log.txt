@@ -1,0 +1,34 @@
+
+====================================================
+Time: 2026-09-12T16:42:46.517Z
+Test: Unknown Test - Passed
+Endpoint: booking
+Payload: {
+  "firstname": "Cameron",
+  "lastname": "Parisian",
+  "totalprice": 30.288008501355932,
+  "depositpaid": true,
+  "bookingdates": {
+    "checkin": "2026-09-12T14:37:47.761Z",
+    "checkout": "2026-09-12T02:17:48.120Z"
+  },
+  "additionalneeds": "d"
+}
+Expected Status: 200
+Actual Status: 200
+Response:
+{
+  "bookingid": 1233,
+  "booking": {
+    "firstname": "Cameron",
+    "lastname": "Parisian",
+    "totalprice": 30,
+    "depositpaid": true,
+    "bookingdates": {
+      "checkin": "2026-09-12",
+      "checkout": "2026-09-12"
+    },
+    "additionalneeds": "d"
+  }
+}
+====================================================
