@@ -1,107 +1,126 @@
-import { APIRequestContext, APIResponse, expect } from "@playwright/test";
-import * as fs from "fs";
-import * as path from "path";
+import { APIRequestContext, APIResponse, expect } from '@playwright/test';
+import fs, { stat } from "fs";
 
-interface LogEntry {
-  timestamp: string;
-  testTitle: string;
-  method: string;
-  url: string;
-  requestBody?: unknown;
-  status: number;
-  responseBody: unknown;
-}
+const RUN_TIMESTAMP = new Date()
+  .toISOString()
+  .slice(0, 16)
+  .replace(/[:.]/g, "-");
 
-export class ApiClient {
-  private readonly baseUrl: string;
-  private readonly requestContext: APIRequestContext;
-  private testTitle: string;
-  private readonly logFilePath: string;
+const LOG_DIR = './logs';
+if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true });
 
-  constructor(baseUrl: string, requestContext: APIRequestContext) {
-    this.baseUrl = baseUrl;
-    this.requestContext = requestContext;
-    this.testTitle = "";
-
-    // One log file per run, timestamped
-    const logsDir = path.join(process.cwd(), "artifacts", "logs");
-    fs.mkdirSync(logsDir, { recursive: true });
-    const runStamp = new Date().toISOString().replace(/[:.]/g, "-");
-    this.logFilePath = path.join(logsDir, `api-run-${runStamp}.log`);
+export class ApiTestHelper {
+  private request: APIRequestContext;
+  private endpoint: string | any;
+  private logFileName: string | any;
+  private currentTestTitle: string = "Unknown Test";
+  constructor(request: APIRequestContext) {
+    this.request = request;
+  }
+  setEndpoint(endpoint: string) {
+    this.endpoint = endpoint
+    const safeEndpoint = this.endpoint.replace(/[<>:"/\\|?*]/g, "_");
+    this.logFileName = `${LOG_DIR}/${safeEndpoint}-${RUN_TIMESTAMP}-log.txt`;
+  }
+  getEndpoint(): string {
+    return this.endpoint
   }
 
-  public setTestTitle(testTitle: string) {
-    this.testTitle = testTitle;
+  setCurrentTestTitle(title: string) {
+    this.currentTestTitle = title;
   }
 
-  private log(entry: LogEntry) {
-    const line = JSON.stringify(entry, null, 2) + "\n---\n";
-    fs.appendFileSync(this.logFilePath, line, "utf-8");
+  private writeLog(log: string) {
+    console.log(log);
+    fs.appendFileSync(this.logFileName, log);
   }
 
-  private async logAndParse(
-    method: string,
-    url: string,
-    response: APIResponse,
-    requestBody?: unknown
-  ): Promise<any> {
-    const status = response.status();
-    let body: unknown;
-    try {
-      body = await response.json();
-    } catch {
-      body = await response.text(); 
+  async postAndExpectError(
+    payload: object,
+    statusCode: number,
+    expectError?: string,
+    testTitle?: string
+  ): Promise<APIResponse> {
+    const title = testTitle ?? this.currentTestTitle;
+
+
+    let testcaseStatus = "Passed";
+
+    console.log(this.endpoint);
+    
+    const response = await this.request.post(this.endpoint, { data: payload });
+    const responseText = await response.text();
+    const body = await response.json();
+    console.log("Response Body: ", body);
+    console.log("\n Status Code: ", statusCode);
+    if (statusCode != response.status() || (expectError != undefined && !responseText.includes(expectError))) {
+      testcaseStatus = "Failed"
     }
+    const log = `
+====================================================
+Time: ${new Date().toISOString()}
+Test: ${title} - ${testcaseStatus}
+Endpoint: ${this.endpoint}
+Payload: ${JSON.stringify(payload, null, 2)}
+Expected Status: ${statusCode}
+Actual Status: ${response.status()}
+Response:
+${JSON.stringify(body, null, 2)}
+====================================================
+`;
 
-    this.log({
-      timestamp: new Date().toISOString(),
-      testTitle: this.testTitle,
-      method,
-      url: `${this.baseUrl}${url}`,
-      requestBody,
-      status,
-      responseBody: body,
-    });
+    this.writeLog(log);
 
-    return body;
+    expect(response.status(), "Status Code").toBe(statusCode);
+    if (expectError !== undefined)
+      expect(responseText).toContain(expectError);
+
+    return response;
   }
 
-  public async getAndAssert(
-    url: string,
-    expectedStatus: number,
-    expectedMessageCode: string
-  ): Promise<any> {
-    const response = await this.requestContext.get(`${this.baseUrl}${url}`);
-    const body = await this.logAndParse("GET", url, response);
+  async getAndExpectError(
+    params: Record<string, string | undefined>,
+    statusCode: number,
+    expectError?: string,
+    testTitle?: string
+  ): Promise<APIResponse> {
+    const title = testTitle ?? this.currentTestTitle;
 
-    expect(response.status(), `Unexpected status for GET ${url}`).toBe(expectedStatus);
-    if (expectedMessageCode) {
-      expect(
-        JSON.stringify(body),
-        `Expected response to contain "${expectedMessageCode}"`
-      ).toContain(expectedMessageCode);
+    const query = Object.entries(params)
+      .filter(([, v]) => v !== undefined)
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v as string)}`)
+      .join('&');
+    const fullUrl = query ? `${this.endpoint}?${query}` : this.endpoint;
+
+    let testcaseStatus = "Passed";
+
+    const response = await this.request.get(fullUrl);
+    const responseText = await response.text();
+    const body = await response.json().catch(() => null);
+
+    if (statusCode != response.status() || (expectError != undefined && !responseText.includes(expectError))) {
+      testcaseStatus = "Failed"
     }
-    return body;
-  }
+    console.log("Response Body: ", body);
+    console.log("\n Status Code: ", statusCode);
+    const log = `
+====================================================
+Time: ${new Date().toISOString()}
+Test: ${title} - ${testcaseStatus}
+Endpoint: ${fullUrl}
+Expected Status: ${statusCode}
+Actual Status: ${response.status()}
+Response:
+${JSON.stringify(body, null, 2)}
+====================================================
+`;
 
-  public async postAndAssert(
-    url: string,
-    requestBody: any,
-    expectedStatus: number,
-    expectedMessageCode: string
-  ): Promise<any> {
-    const response = await this.requestContext.post(`${this.baseUrl}${url}`, {
-      data: requestBody,
-    });
-    const body = await this.logAndParse("POST", url, response, requestBody);
+    this.writeLog(log);
 
-    expect(response.status(), `Unexpected status for POST ${url}`).toBe(expectedStatus);
-    if (expectedMessageCode) {
-      expect(
-        JSON.stringify(body),
-        `Expected response to contain "${expectedMessageCode}"`
-      ).toContain(expectedMessageCode);
-    }
-    return body;
+    expect(response.status(), "Status Code").toBe(statusCode);
+    if (expectError !== undefined)
+      expect(responseText).toContain(expectError);
+
+    return response;
   }
 }
